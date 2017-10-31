@@ -1,8 +1,8 @@
 // Floppy disc controller and assorted utils.
-define(['utils'], function (utils) {
+define(['./utils'], function (utils) {
     "use strict";
-    function ssdLoad(name) {
-        console.log("Loading disc from " + name);
+    function load(name) {
+        console.log("Loading disc from " + name); // todo support zip files
         return utils.loadData(name);
     }
 
@@ -10,6 +10,7 @@ define(['utils'], function (utils) {
         var result = {
             notFound: 0,
             seek: function () {
+                return 0;
             },
             poll: function () {
                 if (this.notFound && --this.notFound === 0) fdc.notFound();
@@ -22,7 +23,7 @@ define(['utils'], function (utils) {
         return result;
     }
 
-    function ssdFor(fdc, stringData) {
+    function discFor(fdc, isDsd, stringData) {
         var data;
         if (typeof(stringData) !== "string") {
             data = stringData;
@@ -31,7 +32,7 @@ define(['utils'], function (utils) {
             data = new Uint8Array(len);
             for (var i = 0; i < len; ++i) data[i] = stringData.charCodeAt(i) & 0xff;
         }
-        return baseSsd(fdc, data);
+        return baseDisc(fdc, isDsd, data);
     }
 
     function localDisc(fdc, name) {
@@ -42,7 +43,7 @@ define(['utils'], function (utils) {
         if (!dataString) {
             console.log("Creating browser-local disc " + name);
             data = new Uint8Array(100 * 1024);
-            for (i = 0; i < Math.max(12, name.length); ++i)
+            for (i = 0; i < Math.min(12, name.length); ++i)
                 data[i] = name.charCodeAt(i) & 0xff;
         } else {
             console.log("Loading browser-local disc " + name);
@@ -50,17 +51,17 @@ define(['utils'], function (utils) {
             data = new Uint8Array(len);
             for (i = 0; i < len; ++i) data[i] = dataString.charCodeAt(i) & 0xff;
         }
-        return baseSsd(fdc, data, function () {
+        return baseDisc(fdc, false, data, function () {
             var str = "";
             for (var i = 0; i < data.length; ++i) str += String.fromCharCode(data[i]);
             localStorage[discName] = str;
         });
     }
 
-    function baseSsd(fdc, data, flusher) {
+    function baseDisc(fdc, isDsd, data, flusher) {
         if (data === null || data === undefined) throw new Error("Bad disc data");
         return {
-            dsd: false,
+            dsd: isDsd,
             inRead: false,
             inWrite: false,
             inFormat: false,
@@ -80,7 +81,9 @@ define(['utils'], function (utils) {
             seek: function (track) {
                 this.seekOffset = track * 10 * 256;
                 if (this.dsd) this.seekOffset <<= 1;
+                var oldTrack = this.track;
                 this.track = track;
+                return this.track - oldTrack;
             },
             check: function (track, side, density) {
                 if (this.track !== track || density || (side && !this.dsd)) {
@@ -166,7 +169,7 @@ define(['utils'], function (utils) {
                             fdc.discData(0);
                             break;
                         case 6:
-                            this.inRead = false;
+                            this.inReadAddr = false;
                             fdc.discFinishRead();
                             this.rsector++;
                             if (this.rsector === 10) this.rsector = 0;
@@ -195,7 +198,7 @@ define(['utils'], function (utils) {
         };
     }
 
-    function I8271(cpu) {
+    function I8271(cpu, noise) {
         var self = this;
         self.status = 0;
         self.result = 0;
@@ -291,8 +294,10 @@ define(['utils'], function (utils) {
             this.time = 200;
         };
 
-        var paramMap = {0x35: 4, 0x29: 1, 0x2c: 0, 0x3d: 1, 0x3a: 2, 0x13: 3, 0x0b: 3,
-            0x1b: 3, 0x1f: 3, 0x23: 5 };
+        var paramMap = {
+            0x35: 4, 0x29: 1, 0x2c: 0, 0x3d: 1, 0x3a: 2, 0x13: 3, 0x0b: 3,
+            0x1b: 3, 0x1f: 3, 0x23: 5
+        };
 
         function numParams(command) {
             var found = paramMap[command];
@@ -375,13 +380,14 @@ define(['utils'], function (utils) {
         function spinup() {
             // TODO: not sure where this should go, or for how long. This is a workaround for EliteA
             if (!self.motorOn[self.curDrive]) {
-                self.readyTimer = 1000000; // Apparently takes a half second to spin up
+                self.readyTimer = (0.5 * cpu.peripheralCyclesPerSecond) | 0; // Apparently takes a half second to spin up
             } else {
                 self.readyTimer = 1000;  // little bit of time for each command (so, really, spinup is a bad place to put this)
             }
             self.isActive = true;
             self.motorOn[self.curDrive] = true;
             self.motorSpin[self.curDrive] = 0;
+            noise.spinUp();
         }
 
         function setspindown() {
@@ -392,9 +398,9 @@ define(['utils'], function (utils) {
         function seek(track) {
             spinup();
             self.realTrack[self.curDrive] += track - self.curTrack[self.curDrive];
-            self.drives[self.curDrive].seek(self.realTrack[self.curDrive]);
-            // NB should be dependent on diff; but always non-zero
-            self.time = 200; // TODO: b-em uses a round-the-houses approach to this where ddnoise actually sets time
+            var diff = self.drives[self.curDrive].seek(self.realTrack[self.curDrive]);
+            var seekLen = (noise.seek(diff) * cpu.peripheralCyclesPerSecond) | 0;
+            self.time = Math.max(200, seekLen);
         }
 
         var debugByte = 0;
@@ -574,8 +580,10 @@ define(['utils'], function (utils) {
             if (self.motorTime <= 0) {
                 self.motorTime += 128;
                 for (var i = 0; i < 2; ++i) {
-                    if (self.motorSpin[i] && --self.motorSpin[i] === 0)
+                    if (self.motorSpin[i] && --self.motorSpin[i] === 0) {
                         self.motorOn[i] = false;
+                        noise.spinDown(); // TODO multiple discs!
+                    }
                 }
                 self.isActive = self.motorOn[0] || self.motorOn[1];
             }
@@ -586,8 +594,9 @@ define(['utils'], function (utils) {
         };
     }
 
-    function WD1770(cpu) {
+    function WD1770(cpu, noise) {
         this.cpu = cpu;
+        this.noise = noise;
         this.isActive = false;
         this.command = 0;
         this.sector = 0;
@@ -613,12 +622,14 @@ define(['utils'], function (utils) {
         this.status |= 0x80;
         this.motorOn[this.curDrive] = true;
         this.motorSpin[this.curDrive] = 0;
+        this.noise.spinUp();
     };
 
     WD1770.prototype.spinDown = function () {
         this.isActive = 0;
         this.status &= ~0x80;
         this.motorOn[this.curDrive] = false;
+        this.noise.spinDown();
     };
 
     WD1770.prototype.setSpinDown = function () {
@@ -693,11 +704,11 @@ define(['utils'], function (utils) {
                     this.motorOn[i] = false;
             }
             this.isActive = this.motorOn[0] || this.motorOn[1];
+            if (!this.isActive) this.noise.spinDown();
         }
     };
 
     WD1770.prototype.read = function (addr) {
-//        console.log(utils.hexword(addr));
         // b-em clears NMIs, but that happens after each instruction anyway, so
         // I'm not quite sure what that's all about.
         switch (addr) {
@@ -719,7 +730,6 @@ define(['utils'], function (utils) {
     };
 
     WD1770.prototype.write = function (addr, byte) {
-//        console.log(utils.hexword(addr), utils.hexbyte(byte));
         switch (addr) {
             case 0xfe80:
                 this.curDrive = (byte & 2) ? 1 : 0;
@@ -764,43 +774,43 @@ define(['utils'], function (utils) {
         return this.drives[this.curDrive];
     };
 
+    WD1770.prototype.seek = function(addr) {
+        var diff = this.curDisc().seek(addr);
+        var seekTime = (this.noise.seek(diff) * this.cpu.peripheralCyclesPerSecond)|0;
+        this.time = Math.max(200, seekTime);
+    };
+
     WD1770.prototype.handleCommand = function (command) {
-//        console.log("command ", command);
         switch (command) {
             case 0x0: // Restore
                 this.status = 0x80 | 0x21 | this.track0();
-                this.curDisc().seek(0);
-                this.time = 200; // TODO: unify with 1770 and
+                this.seek(0);
                 break;
             case 0x01: // Seek
                 this.status = 0x80 | 0x21 | this.track0();
-                this.curDisc().seek(this.data);
-                this.time = 200; // TODO: unify with 1770 and
+                this.seek(this.data);
                 break;
             case 0x02: // Step (no update)
             case 0x03: // Step (update track register)
                 this.status = 0x80 | 0x21 | this.track0();
                 this.curTrack += this.stepIn ? 1 : -1;
                 if (this.curTrack < 0) this.curTrack = 0;
-                this.curDisc().seek(this.curTrack);
-                this.time = 200; // TODO: unify with 1770 and
+                this.seek(this.curTrack);
                 break;
             case 0x04: // Step in (no update)
             case 0x05: // Step in (update track register)
                 this.status = 0x80 | 0x21 | this.track0();
                 this.curTrack++;
-                this.curDisc().seek(this.curTrack);
+                this.seek(this.curTrack);
                 this.stepIn = true;
-                this.time = 200; // TODO: unify with 1770 and
                 break;
             case 0x06: // Step out (no update)
             case 0x07: // Step out (update track register)
                 this.status = 0x80 | 0x21 | this.track0();
                 this.curTrack--;
                 if (this.curTrack < 0) this.curTrack = 0;
-                this.curDisc().seek(this.curTrack);
+                this.seek(this.curTrack);
                 this.stepIn = false;
-                this.time = 200; // TODO: unify with 1770 and
                 break;
             case 0x08: // Read single sector
                 this.status = 0x81;
@@ -882,10 +892,10 @@ define(['utils'], function (utils) {
     return {
         I8271: I8271,
         WD1770: WD1770,
-        ssdLoad: ssdLoad,
+        load: load,
         localDisc: localDisc,
         emptySsd: emptySsd,
-        ssdFor: ssdFor,
-        baseSsd: baseSsd
+        discFor: discFor,
+        baseDisc: baseDisc
     };
 });

@@ -1,4 +1,4 @@
-define(['utils', '6502.opcodes', 'via', 'acia', 'serial', 'tube', 'adc'],
+define(['./utils', './6502.opcodes', './via', './acia', './serial', './tube', './adc'],
     function (utils, opcodesAll, via, Acia, Serial, Tube, Adc) {
         "use strict";
         var hexword = utils.hexword;
@@ -106,9 +106,9 @@ define(['utils', '6502.opcodes', 'via', 'acia', 'serial', 'tube', 'adc'],
                 var newPc = (cpu.pc + offset) & 0xffff;
                 var pageCrossed = !!((cpu.pc & 0xff00) ^ (newPc & 0xff00));
                 cpu.pc = newPc;
-                cpu.polltime(pageCrossed ? 3 : 1);
+                cpu.polltime(pageCrossed ? 3 : 2);
                 cpu.checkInt();
-                cpu.polltime(pageCrossed ? 1 : 2);
+                cpu.polltime(1);
             };
 
             function adcNonBCD(addend) {
@@ -276,12 +276,11 @@ define(['utils', '6502.opcodes', 'via', 'acia', 'serial', 'tube', 'adc'],
 
             this.tube = new Tube(cpu, this);
 
-            this.reset = function () {
+            this.reset = function (hard) {
                 this.romPaged = true;
                 this.pc = this.readmem(0xfffc) | (this.readmem(0xfffd) << 8);
                 this.p.i = true;
-                console.log("Tube initialized to start at $" + hexword(this.pc));
-                this.tube.reset();
+                this.tube.reset(hard);
             };
 
             this.readmem = function (offset) {
@@ -377,15 +376,19 @@ define(['utils', '6502.opcodes', 'via', 'acia', 'serial', 'tube', 'adc'],
             };
         }
 
-        return function Cpu6502(model, dbgr, video_, soundChip_, cmos, config) {
+        return function Cpu6502(model, dbgr, video_, soundChip_, ddNoise_, cmos, config) {
             if (config === undefined) config = {};
             if (!config.keyLayout)
                 config.keyLayout = "physical";
+            if (!config.cpuMultiplier)
+                config.cpuMultiplier = 1;
+            config.extraRoms = config.extraRoms || [];
 
             base6502(this, model);
 
             this.video = video_;
             this.soundChip = soundChip_;
+            this.ddNoise = ddNoise_;
             this.memStatOffsetByIFetchBank = new Uint32Array(16);  // helps in master map of LYNNE for non-opcode read/writes
             this.memStatOffset = 0;
             this.memStat = new Uint8Array(512);
@@ -401,8 +404,11 @@ define(['utils', '6502.opcodes', 'via', 'acia', 'serial', 'tube', 'adc'],
             this.oldAArray = new Uint8Array(256);
             this.oldXArray = new Uint8Array(256);
             this.oldYArray = new Uint8Array(256);
-            this.oldPArray = new Uint8Array(256);
             this.oldPcIndex = 0;
+            this.resetLine = true;
+            this.cpuMultiplier = config.cpuMultiplier;
+            this.videoCyclesBatch = config.videoCyclesBatch | 0;
+            this.peripheralCyclesPerSecond = 2 * 1000 * 1000;
             this.getPrevPc = function (index) {
                 return this.oldPcArray[(this.oldPcIndex - index) & 0xff];
             };
@@ -467,7 +473,7 @@ define(['utils', '6502.opcodes', 'via', 'acia', 'serial', 'tube', 'adc'],
                 addr &= 0xffff;
                 var res = this.ramRomOs[addr];
                 if (this._debugRead) this._debugRead(addr, 0, res);
-                return res|0;
+                return res | 0;
             };
             this.writememZpStack = function (addr, b) {
                 addr &= 0xffff;
@@ -501,7 +507,7 @@ define(['utils', '6502.opcodes', 'via', 'acia', 'serial', 'tube', 'adc'],
                 return null;
             };
 
-            this.readArea = function(addr, len) {
+            this.readArea = function (addr, len) {
                 var str = "";
                 for (var i = 0; i < len; ++i) {
                     str += utils.hexbyte(this.readmem(addr + i));
@@ -609,8 +615,6 @@ define(['utils', '6502.opcodes', 'via', 'acia', 'serial', 'tube', 'adc'],
                     case 0xfefc:
                         return this.tube.read(addr);
                 }
-//                console.log("Unhandled peripheral read of", addr);
-//                stop(true);
                 if (addr >= 0xfc00 && addr < 0xfe00) return 0xff;
                 return addr >> 8;
             };
@@ -628,9 +632,18 @@ define(['utils', '6502.opcodes', 'via', 'acia', 'serial', 'tube', 'adc'],
                     if (this._debugRead) this._debugRead(addr, res, offset);
                     return res | 0;
                 } else {
-                     res = this.readDevice(addr);
+                    res = this.readDevice(addr);
                     if (this._debugRead) this._debugRead(addr, res, 0);
                     return res | 0;
+                }
+            };
+
+            this.peekmem = function (addr) {
+                if (this.memStat[this.memStatOffset + (addr >>> 8)]) {
+                    var offset = this.memLook[this.memStatOffset + (addr >>> 8)];
+                    return this.ramRomOs[offset + addr];
+                } else {
+                    return 0xff;// TODO; peekDevice -- this.peekDevice(addr);
                 }
             };
 
@@ -751,12 +764,11 @@ define(['utils', '6502.opcodes', 'via', 'acia', 'serial', 'tube', 'adc'],
                     case 0xfefc:
                         return this.tube.write(addr, b);
                 }
-//                console.log("Unhandled peripheral write to", addr);
-//                stop(true);
             };
 
             this.loadRom = function (name, offset) {
-                name = "roms/" + name;
+                if (name.indexOf('http') !== 0)
+                    name = "roms/" + name;
                 console.log("Loading ROM from " + name);
                 var ramRomOs = this.ramRomOs;
                 return utils.loadData(name).then(function (data) {
@@ -772,7 +784,7 @@ define(['utils', '6502.opcodes', 'via', 'acia', 'serial', 'tube', 'adc'],
 
             this.loadOs = function (os) {
                 var i;
-                var extraRoms = Array.prototype.slice.call(arguments, 1);
+                var extraRoms = Array.prototype.slice.call(arguments, 1).concat(config.extraRoms);
                 os = "roms/" + os;
                 console.log("Loading OS from " + os);
                 var ramRomOs = this.ramRomOs;
@@ -802,6 +814,10 @@ define(['utils', '6502.opcodes', 'via', 'acia', 'serial', 'tube', 'adc'],
                 });
             };
 
+            this.setReset = function (resetOn) {
+                this.resetLine = !resetOn;
+            };
+
             this.reset = function (hard) {
                 var i;
                 if (hard) {
@@ -829,23 +845,26 @@ define(['utils', '6502.opcodes', 'via', 'acia', 'serial', 'tube', 'adc'],
                     this.uservia = via.UserVia(this, model.isMaster);
                     this.acia = new Acia(this, this.soundChip.toneGenerator);
                     this.serial = new Serial(this.acia);
-                    this.fdc = new model.Fdc(this);
+                    this.fdc = new model.Fdc(this, this.ddNoise);
                     this.crtc = this.video.crtc;
                     this.ula = this.video.ula;
                     this.adconverter = new Adc(this.sysvia);
-                    this.sysvia.reset();
-                    this.uservia.reset();
+                    this.sysvia.reset(hard);
+                    this.uservia.reset(hard);
                 }
-                this.tube.reset();
-                this.targetCycles = 0;
-                this.currentCycles = 0;
+                this.tube.reset(hard);
+                if (hard) {
+                    this.targetCycles = 0;
+                    this.currentCycles = 0;
+                    this.cycleSeconds = 0;
+                }
                 this.pc = this.readmem(0xfffc) | (this.readmem(0xfffd) << 8);
                 this.p = new Flags();
                 this.p.i = true;
                 this.nmi = false;
                 this.halted = false;
-                this.video.reset(this, this.sysvia);
-                if (hard) this.soundChip.reset();
+                this.video.reset(this, this.sysvia, hard);
+                if (hard) this.soundChip.reset(hard);
             };
 
             this.updateKeyLayout = function () {
@@ -860,36 +879,83 @@ define(['utils', '6502.opcodes', 'via', 'acia', 'serial', 'tube', 'adc'],
                 this.polltime(cycles);
             };
 
-            this.polltime = function (cycles) {
+            this.peripheralCycles = 0;
+            this.videoCycles = 0;
+
+            // Slow version allows video batching and cpu multipliers
+            this.polltimeSlow = function (cycles) {
                 cycles |= 0;
                 this.currentCycles += cycles;
+                this.peripheralCycles += cycles;
+                this.videoCycles += cycles;
+                cycles = (this.videoCycles / this.cpuMultiplier) | 0;
+                if (cycles > this.videoCyclesBatch) {
+                    this.video.polltime(cycles);
+                    this.videoCycles -= (cycles * this.cpuMultiplier) | 0;
+                }
+                cycles = (this.peripheralCycles / this.cpuMultiplier) | 0;
+                if (!cycles) return;
+                this.peripheralCycles -= (cycles * this.cpuMultiplier) | 0;
                 this.sysvia.polltime(cycles);
                 this.uservia.polltime(cycles);
                 this.fdc.polltime(cycles);
                 this.acia.polltime(cycles);
-                this.video.polltime(cycles);
                 this.soundChip.polltime(cycles);
                 this.adconverter.polltime(cycles);
                 this.tube.execute(cycles);
             };
 
+            // Faster, but more limited version
+            this.polltimeFast = function (cycles) {
+                cycles |= 0;
+                this.currentCycles += cycles;
+                this.video.polltime(cycles);
+                this.sysvia.polltime(cycles);
+                this.uservia.polltime(cycles);
+                this.fdc.polltime(cycles);
+                this.acia.polltime(cycles);
+                this.soundChip.polltime(cycles);
+                this.adconverter.polltime(cycles);
+                this.tube.execute(cycles);
+            };
+
+            if (this.cpuMultiplier === 1 && this.videoCyclesBatch === 0) {
+                this.polltime = this.polltimeFast;
+            } else {
+                this.polltime = this.polltimeSlow;
+            }
+
             this.execute = function (numCyclesToRun) {
                 this.halted = false;
                 this.targetCycles += numCyclesToRun;
+                // To prevent issues with wrapping around / overflowing the accuracy that poxy Javascript numbers have,
+                // find the smaller of the target and current cycles, and if that's over one second's worth; subtract
+                // that from both, to keep the domain low (while accumulating seconds). Take care to preserve the bottom
+                // bit though; as that encodes whether we're on an even or odd bus cycle.
+                var smaller = Math.min(this.targetCycles, this.currentCycles) & 0xfffffffe;
+                if (smaller >= 2 * 1000 * 1000) {
+                    this.targetCycles -= 2 * 1000 * 1000;
+                    this.currentCycles -= 2 * 1000 * 1000;
+                    this.cycleSeconds++;
+                }
+                var first = true;
                 while (!this.halted && this.currentCycles < this.targetCycles) {
                     this.oldPcIndex = (this.oldPcIndex + 1) & 0xff;
                     this.oldPcArray[this.oldPcIndex] = this.pc;
                     this.memStatOffset = this.memStatOffsetByIFetchBank[this.pc >>> 12];
                     var opcode = this.readmem(this.pc);
-                    if (this._debugInstruction && this.getPrevPc(2) !== this.pc && this._debugInstruction(this.pc, opcode)) {
+                    if (this._debugInstruction && !first && this._debugInstruction(this.pc, opcode)) {
                         return false;
                     }
+                    first = false;
                     this.incpc();
                     this.runner.run(opcode);
                     this.oldAArray[this.oldPcIndex] = this.a;
                     this.oldXArray[this.oldPcIndex] = this.x;
                     this.oldYArray[this.oldPcIndex] = this.y;
-                    this.oldPArray[this.oldPcIndex] = this.p.asByte();
+                    if (!this.resetLine) {
+                        this.reset(false);
+                    }
                     if (this.takeInt) {
                         this.takeInt = false;
                         this.push(this.pc >>> 8);
@@ -922,11 +988,11 @@ define(['utils', '6502.opcodes', 'via', 'acia', 'serial', 'tube', 'adc'],
                 this.cpu = cpu;
                 this.functionName = functionName;
                 this.handlers = [];
-                this.add = function(handler) {
+                this.add = function (handler) {
                     var self = this;
                     this.handlers.push(handler);
                     if (!this.cpu[this.functionName]) {
-                        this.cpu[this.functionName] = function() {
+                        this.cpu[this.functionName] = function () {
                             for (var i = 0; i < self.handlers.length; ++i) {
                                 var handler = self.handlers[i];
                                 if (handler.apply(handler, arguments)) {
@@ -936,12 +1002,12 @@ define(['utils', '6502.opcodes', 'via', 'acia', 'serial', 'tube', 'adc'],
                             return false;
                         };
                     }
-                    handler.remove = function() {
+                    handler.remove = function () {
                         self.remove(handler);
                     };
                     return handler;
                 };
-                this.remove = function(handler) {
+                this.remove = function (handler) {
                     var i = this.handlers.indexOf(handler);
                     if (i < 0) throw "Unable to find debug hook handler";
                     this.handlers = this.handlers.slice(0, i).concat(this.handlers.slice(i + 1));
@@ -950,19 +1016,28 @@ define(['utils', '6502.opcodes', 'via', 'acia', 'serial', 'tube', 'adc'],
                     }
                 };
             }
+
             this.debugInstruction = new DebugHook(this, '_debugInstruction');
             this.debugRead = new DebugHook(this, '_debugRead');
             this.debugWrite = new DebugHook(this, '_debugWrite');
 
-            this.dumpTime = function () {
-                for (var i = 1; i < 256; ++i) {
-                    var j = (i + this.oldPcIndex) & 255;
-                    console.log(utils.hexword(this.oldPcArray[j]),
-                        (this.disassembler.disassemble(this.oldPcArray[j], true)[0] + "                       ").substr(0, 15),
-                        utils.hexbyte(this.oldAArray[j]),
-                        utils.hexbyte(this.oldXArray[j]),
-                        utils.hexbyte(this.oldYArray[j]));
+            this.dumpTime = function (maxToShow, func) {
+                if (!maxToShow) maxToShow = 256;
+                if (maxToShow > 256) maxToShow = 256;
+                var disassembler = this.disassembler;
+                func = func || function (pc, a, x, y) {
+                        var dis = disassembler.disassemble(pc, true)[0];
+                        console.log(utils.hexword(pc),
+                            (dis + "                       ").substr(0, 15),
+                            utils.hexbyte(a),
+                            utils.hexbyte(x),
+                            utils.hexbyte(y));
+                    };
+                for (var i = maxToShow - 2; i >= 0; --i) {
+                    var j = (this.oldPcIndex - i) & 255;
+                    func(this.oldPcArray[j], this.oldAArray[j], this.oldXArray[j], this.oldYArray[j]);
                 }
+                func(this.pc, this.a, this.x, this.y);
             };
 
             this.initialise = function () {
@@ -979,8 +1054,6 @@ define(['utils', '6502.opcodes', 'via', 'acia', 'serial', 'tube', 'adc'],
                 return loadOsPromise.then(function () {
                     capturedThis.reset(true);
                     dbgr.setCpu(capturedThis);
-                    //if (model.tube)
-                    //    dbgr.setCpu(capturedThis.tube);
                 });
             };
         };

@@ -1,4 +1,4 @@
-define(['jquery', 'underscore', 'utils'], function ($, _, utils) {
+define(['jquery', 'underscore', './utils'], function ($, _, utils) {
     "use strict";
     var hexbyte = utils.hexbyte;
     var hexword = utils.hexword;
@@ -7,7 +7,7 @@ define(['jquery', 'underscore', 'utils'], function ($, _, utils) {
         var disass = $('#disassembly');
         var memview = $('#memory');
         var memloc = 0;
-        var debugNode = $('#debug, #hardware_debug');
+        var debugNode = $('#debug, #hardware_debug, #crtc_debug');
 
         function setupGoto(form, func) {
             var addr = form.find(".goto-addr");
@@ -27,6 +27,9 @@ define(['jquery', 'underscore', 'utils'], function ($, _, utils) {
         var enabled = false;
 
         function enable(e) {
+            if (enabled && !e) {
+                updatePrevMem();
+            }
             enabled = e;
             debugNode.toggle(enabled);
         }
@@ -47,27 +50,87 @@ define(['jquery', 'underscore', 'utils'], function ($, _, utils) {
 
         var uservia;
         var sysvia;
+        var crtc;
+
+        function updateElem(elem, val) {
+            var prevVal = elem.text();
+            if (prevVal !== val) {
+                elem.text(val);
+            }
+            elem.toggleClass("changed", prevVal !== val && prevVal !== "");
+        }
 
         function setupVia(node, via) {
             var updates = [];
-            if (!via) return function () {};
-            $.each(["ora", "orb", "ira", "irb", "ddra", "ddrb",
-                "acr", "pcr", "ifr", "ier", "t1c", "t1l", "t2c", "t2l"], function (_, elem) {
+            if (!via) return utils.noop;
+            var regs = ["ora", "orb", "ira", "irb", "ddra", "ddrb",
+                "acr", "pcr", "ifr", "ier",
+                "t1c", "t1l", "t2c", "t2l", "IC32", "sdbval", "sdbout"];
+            $.each(regs, function (_, elem) {
+                if (via[elem] === undefined) return;
                 var row = node.find(".template").clone().removeClass("template").appendTo(node);
                 row.find(".register").text(elem.toUpperCase());
                 var value = row.find(".value");
                 if (elem.match(/t[12][cl]/)) {
                     updates.push(function () {
                         var reg = via[elem];
-                        value.text(hexbyte((reg >> 16) & 0xff) +
-                        hexbyte((reg >> 8) & 0xff) + hexbyte(reg & 0xff));
+                        updateElem(value, hexbyte((reg >> 16) & 0xff) +
+                            hexbyte((reg >> 8) & 0xff) + hexbyte(reg & 0xff));
                     });
                 } else {
                     updates.push(function () {
-                        value.text(hexbyte(via[elem]));
+                        updateElem(value, hexbyte(via[elem]));
                     });
                 }
             });
+            var update = function () {
+                $.each(updates, function (_, up) {
+                    up();
+                });
+            };
+            update();
+            return update;
+        }
+
+        function setupCrtc(node, video) {
+            if (!video) return utils.noop;
+            var updates = [];
+
+            var regNode = node.find('.crtc_regs');
+
+            function makeRow(node, text) {
+                var row = node.find(".template").clone().removeClass("template").appendTo(node);
+                row.find(".register").text(text);
+                return row.find(".value");
+            }
+
+            for (var i = 0; i < 16; ++i) {
+                (function (i) {
+                    var value = makeRow(regNode, "R" + i);
+                    updates.push(function () {
+                        updateElem(value, hexbyte(video.regs[i]));
+                    });
+                })(i);
+            }
+
+            var stateNode = node.find('.crtc_state');
+            var others = [
+                'bitmapX', 'bitmapY', 'dispEnabled',
+                'horizCounter', 'inHSync', 'scanlineCounter', 'vertCounter', 'inVSync', 'inVertAdjust',
+                'addr', 'addrLine', 'lineStartAddr', 'nextLineStartAddr'];
+            $.each(others, function (_, elem) {
+                var value = makeRow(stateNode, elem);
+                if (typeof(video[elem]) === "boolean") {
+                    updates.push(function () {
+                        updateElem(value, video[elem] ? "true" : "false");
+                    });
+                } else {
+                    updates.push(function () {
+                        updateElem(value, hexword(video[elem]));
+                    });
+                }
+            });
+
             var update = function () {
                 $.each(updates, function (_, up) {
                     up();
@@ -82,6 +145,7 @@ define(['jquery', 'underscore', 'utils'], function ($, _, utils) {
             disassemble = c.disassembler.disassemble;
             sysvia = setupVia($('#sysvia'), c.sysvia);
             uservia = setupVia($('#uservia'), c.uservia);
+            crtc = setupCrtc($('#crtc_debug'), c.video);
         };
 
         var disassPc = null;
@@ -93,6 +157,7 @@ define(['jquery', 'underscore', 'utils'], function ($, _, utils) {
             updateMemory();
             sysvia();
             uservia();
+            crtc();
             video.debugPaint();
         };
 
@@ -101,13 +166,13 @@ define(['jquery', 'underscore', 'utils'], function ($, _, utils) {
         };
 
         function updateRegisters() {
-            $("#cpu6502_a").text(hexbyte(cpu.a));
-            $("#cpu6502_x").text(hexbyte(cpu.x));
-            $("#cpu6502_y").text(hexbyte(cpu.y));
-            $("#cpu6502_s").text(hexbyte(cpu.s));
-            $("#cpu6502_pc").text(hexword(cpu.pc));
+            updateElem($("#cpu6502_a"), hexbyte(cpu.a));
+            updateElem($("#cpu6502_x"), hexbyte(cpu.x));
+            updateElem($("#cpu6502_y"), hexbyte(cpu.y));
+            updateElem($("#cpu6502_s"), hexbyte(cpu.s));
+            updateElem($("#cpu6502_pc"), hexword(cpu.pc));
             ["c", "z", "i", "d", "v", "n"].forEach(function (flag) {
-                $("#cpu6502_flag_" + flag).text(cpu.p[flag] ? flag.toUpperCase() : flag);
+                updateElem($("#cpu6502_flag_" + flag), cpu.p[flag] ? flag.toUpperCase() : flag);
             });
         }
 
@@ -121,6 +186,7 @@ define(['jquery', 'underscore', 'utils'], function ($, _, utils) {
         }
 
         function step() {
+            updatePrevMem();
             var curpc = cpu.pc;
             stepUntil(function () {
                 return cpu.pc !== curpc;
@@ -135,6 +201,7 @@ define(['jquery', 'underscore', 'utils'], function ($, _, utils) {
         }
 
         function stepOver() {
+            updatePrevMem();
             if (isUnconditionalJump(cpu.pc)) {
                 return step();
             }
@@ -150,6 +217,7 @@ define(['jquery', 'underscore', 'utils'], function ($, _, utils) {
         }
 
         function stepOut() {
+            updatePrevMem();
             var s = cpu.s;
             stepUntil(function () {
                 if (cpu.s >= s && isReturn(cpu.pc)) {
@@ -161,19 +229,42 @@ define(['jquery', 'underscore', 'utils'], function ($, _, utils) {
             });
         }
 
+        // Some attempt at making prevInstruction more accurate; score the sequence of instructions leading
+        // up to the target by counting all "common" instructions as a point. The highest-scoring run of
+        // instructions is picked as the most likely, and the previous from that is used. Common instructions
+        // here mean loads, stores, branches, compares, arithmetic and carry-set/clear that don't use "unusual"
+        // indexing modes like abs,X, abs,Y and (zp,X).
+        // Good test cases:
+        //   Repton 2 @ 2cbb
+        //   MOS @ cfc8
+        // also, just starting from the back of ROM and going up...
+        var commonInstructions = /(RTS|B..|JMP|JSR|LD[AXY]|ST[AXY]|TA[XY]|T[XY]A|AD[DC]|SUB|SBC|CLC|SEC|CMP|EOR|ORR|AND|INC|DEC).*/;
+        var uncommonInstrucions = /.*,\s*([XY]|X\))$/;
+
         function prevInstruction(address) {
             address &= 0xffff;
+            var bestAddr = address - 1;
+            var bestScore = 0;
             for (var startingPoint = address - 20; startingPoint !== address; startingPoint++) {
+                var score = 0;
                 var addr = startingPoint & 0xffff;
                 while (addr < address) {
                     var result = disassemble(addr);
-                    if (result[1] === address && result[0] !== "???") {
-                        return addr;
+                    if (result[0] == cpu.pc) score += 10; // huge boost if this instruction was executed
+                    if (result[0].match(commonInstructions) && !result[0].match(uncommonInstrucions)) {
+                        score++;
+                    }
+                    if (result[1] === address) {
+                        if (score > bestScore) {
+                            bestScore = score;
+                            bestAddr = addr;
+                            break;
+                        }
                     }
                     addr = result[1];
                 }
             }
-            return address - 1;
+            return bestAddr;
         }
 
         function nextInstruction(address) {
@@ -185,6 +276,8 @@ define(['jquery', 'underscore', 'utils'], function ($, _, utils) {
             /* later, more clevers */
         }
 
+        var breakpoints = {};
+
         function labelHtml(addr) {
             var name = addressName(addr);
             if (name) {
@@ -194,20 +287,29 @@ define(['jquery', 'underscore', 'utils'], function ($, _, utils) {
             }
         }
 
+        var prevDump = [];
+
+        function updatePrevMem() {
+            for (var i = 0; i < 65536; ++i) {
+                prevDump[i] = cpu.peekmem(i);
+            }
+        }
+
         function memdump(from, to) {
-            var hex = "";
-            var asc = "";
+            var hex = [];
+            var asc = [];
+            var changed = [];
             for (var i = from; i < to; ++i) {
-                if (hex !== "") hex += " ";
-                var b = cpu.readmem(i);
-                hex += hexbyte(b);
+                var b = cpu.peekmem(i);
+                hex.push(hexbyte(b));
+                changed.push(i < prevDump.length && prevDump[i] !== b);
                 if (b >= 32 && b < 128) {
-                    asc += String.fromCharCode(b);
+                    asc.push(String.fromCharCode(b));
                 } else {
-                    asc += ".";
+                    asc.push(".");
                 }
             }
-            return {hex: hex, asc: asc};
+            return {hex: hex, asc: asc, changed: changed};
         }
 
         function updateMemory(newAddr) {
@@ -219,24 +321,47 @@ define(['jquery', 'underscore', 'utils'], function ($, _, utils) {
                 $(this).find('.dis_addr').html(labelHtml(addr));
                 $(this).toggleClass('highlight', addr === memloc);
                 var dump = memdump(addr, addr + 8);
-                $(this).find('.mem_bytes').text(dump.hex);
-                $(this).find('.mem_asc').text(dump.asc);
+                var bytes = $(this).find('.mem_bytes span');
+                var ascii = $(this).find('.mem_asc span');
+                for (var i = 0; i < 8; ++i) {
+                    $(bytes[i]).text(dump.hex[i]).toggleClass("changed", dump.changed[i]);
+                    $(ascii[i]).text(dump.asc[i]).toggleClass("changed", dump.changed[i]);
+                }
                 addr += 8;
             });
         }
 
-        function instrClick(address) {
-            return function () {
-                disassStack.push(disassPc);
-                updateDisassembly(address);
-            };
+        function instrClick(e) {
+            var info = $(e.target).closest('.dis_elem').data();
+            disassStack.push(disassPc);
+            updateDisassembly(info.ref);
         }
 
-        function memClick(address) {
-            return function () {
-                updateMemory(address);
-            };
+        function memClick(e) {
+            var info = $(e.target).closest('.dis_elem').data();
+            updateMemory(info.ref);
         }
+
+        function toggleBreakpoint(address) {
+            if (breakpoints[address]) {
+                console.log("Removing breakpoint from address " + utils.hexword(address));
+                breakpoints[address].remove();
+                breakpoints[address] = undefined;
+            } else {
+                console.log("Adding breakpoint to address " + utils.hexword(address));
+                breakpoints[address] = cpu.debugInstruction.add(function (x) {
+                    return x === address;
+                });
+            }
+        }
+
+        function bpClick(e) {
+            var address = $(e.target).closest('.dis_elem').data().addr;
+            toggleBreakpoint(address);
+            $(e.target).toggleClass('active', !!breakpoints[address]);
+        }
+
+        disass.find('.bp_gutter').click(bpClick);
 
         function updateDisassembly(address) {
             disassPc = address;
@@ -248,11 +373,13 @@ define(['jquery', 'underscore', 'utils'], function ($, _, utils) {
                 elem.find('.dis_addr').html(labelHtml(address));
                 elem.toggleClass('current', address === cpu.pc);
                 elem.toggleClass('highlight', address === disassPc);
-                elem.find('.instr_bytes').text(dump.hex);
-                elem.find('.instr_asc').text(dump.asc);
-                elem.find('.disassembly').html(result[0]);
-                elem.find('.instr_mem_ref').click(memClick(result[2]));
-                elem.find('.instr_instr_ref').click(instrClick(result[2]));
+                elem.find('.instr_bytes').text(dump.hex.join(" "));
+                elem.find('.instr_asc').text(dump.asc.join(""));
+                var disNode = elem.find('.disassembly').html(result[0]);
+                disNode.find('.instr_mem_ref').click(memClick);
+                disNode.find('.instr_instr_ref').click(instrClick);
+                elem.find('.bp_gutter').toggleClass('active', !!breakpoints[address]);
+                elem.data({addr: address, ref: result[2]});
                 return result[1];
             }
 
@@ -270,6 +397,28 @@ define(['jquery', 'underscore', 'utils'], function ($, _, utils) {
             }
         }
 
+        disass.bind('wheel', function (evt) {
+            var deltaY = evt.originalEvent.deltaY;
+            if (deltaY === 0) return;
+            var addr = disassPc;
+            var func = deltaY < 0 ? prevInstruction : nextInstruction;
+            deltaY = Math.abs(deltaY);
+            while (deltaY > 0) {
+                addr = func(addr);
+                deltaY -= 30;
+            }
+            updateDisassembly(addr);
+            evt.preventDefault();
+        });
+
+        memview.bind('wheel', function (evt) {
+            var deltaY = evt.originalEvent.deltaY;
+            if (deltaY === 0) return;
+            var steps = (deltaY / 20) | 0;
+            updateMemory(memloc + 8 * steps);
+            evt.preventDefault();
+        });
+
         this.keyPress = function (key) {
             if ($(":focus").length > 0) {
                 return false;
@@ -284,6 +433,10 @@ define(['jquery', 'underscore', 'utils'], function ($, _, utils) {
                     break;
                 case 'j':
                     updateDisassembly(nextInstruction(disassPc));
+                    break;
+                case 't':
+                    toggleBreakpoint(disassPc);
+                    updateDisassembly(disassPc);
                     break;
                 case 'u':
                     updateMemory(memloc + 8);
@@ -301,6 +454,7 @@ define(['jquery', 'underscore', 'utils'], function ($, _, utils) {
                     step();
                     break;
                 case 'N':
+                    updatePrevMem();
                     cpu.execute(1);
                     self.debug(cpu.pc);
                     break;

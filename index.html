@@ -20,8 +20,8 @@
         (function (i, s, o, g, r, a, m) {
             i['GoogleAnalyticsObject'] = r;
             i[r] = i[r] || function () {
-                (i[r].q = i[r].q || []).push(arguments)
-            }, i[r].l = 1 * new Date();
+                        (i[r].q = i[r].q || []).push(arguments)
+                    }, i[r].l = 1 * new Date();
             a = s.createElement(o),
                     m = s.getElementsByTagName(o)[0];
             a.async = 1;
@@ -57,12 +57,14 @@
                 <span class="icon-bar"></span>
                 <span class="icon-bar"></span>
             </button>
-            <a class="navbar-brand" href="#">jsbeeb - a Javascript BBC micro emulator</a>
+            <a class="navbar-brand" href="http://bbc.godbolt.org/" target="_top">jsbeeb - a Javascript BBC micro
+                emulator</a>
         </div>
         <div class="collapse navbar-collapse">
             <ul class="nav navbar-nav">
                 <li class="dropdown btn-group">
-                    <a href="#" class="dropdown-toggle" data-toggle="dropdown"><span id="bbc-model">BBC B</span><b class="caret"></b></a>
+                    <a href="#" class="dropdown-toggle" data-toggle="dropdown"><span id="bbc-model">BBC B</span><b
+                            class="caret"></b></a>
                     <ul class="dropdown-menu" role="menu" id="model-menu">
                         <li><a href="#" data-target="B">BBC B</a></li>
                         <li><a href="#" data-target="Master">BBC Master 128</a></li>
@@ -79,7 +81,7 @@
                         <li><a href="#" data-target="gaming">Gaming: handy for games like Zalaga</a></li>
                     </ul>
                 </li>
-                <li class="dropdown">
+                <li class="dropdown embed-hide">
                     <a href="#" class="dropdown-toggle" data-toggle="dropdown">Discs<b class="caret"></b></a>
                     <ul class="dropdown-menu">
                         <li><a href="#sth" class="sth" data-id="discs" data-toggle="modal" data-target="#sth">From STH
@@ -90,7 +92,7 @@
                         </li>
                     </ul>
                 </li>
-                <li class="dropdown">
+                <li class="dropdown embed-hide">
                     <a href="#" class="dropdown-toggle" data-toggle="dropdown">Cassettes<b class="caret"></b></a>
                     <ul class="dropdown-menu" id="tape-menu">
                         <li><a href="#sth" class="sth" data-toggle="modal" data-id="tapes" data-target="#sth">From STH
@@ -100,7 +102,7 @@
                         </li>
                     </ul>
                 </li>
-                <li class="dropdown">
+                <li class="dropdown embed-hide">
                     <a href="#" class="dropdown-toggle" data-toggle="dropdown">Share<b class="caret"></b></a>
                     <ul class="dropdown-menu">
                         <li class="social">
@@ -120,7 +122,7 @@
                         </li>
                     </ul>
                 </li>
-                <li class="dropdown">
+                <li class="dropdown embed-hide">
                     <a href="#" class="dropdown-toggle" data-toggle="dropdown">Contact<b class="caret"></b></a>
                     <ul class="dropdown-menu">
                         <li><a href="https://plus.google.com/105166465490735292917" rel="author">About Matt</a></li>
@@ -128,18 +130,21 @@
                     </ul>
                 </li>
                 <li><a href="#help" data-toggle="modal" data-target="#help">Help</a></li>
-                <li><a href="#about" data-toggle="modal" data-target="#info">About</a></li>
+                <li><a href="#about" data-toggle="modal" data-target="#info" id="about">About</a></li>
             </ul>
         </div>
         <!--/.nav-collapse -->
     </div>
 </div>
 
-<div class="container">
-    <div id="cub-monitor">
-        <div>
-            <img id="#cub-monitor-pic" width="921" height="682" src="images/cub-monitor.png">
-            <canvas id="screen" width="921" height="682"></canvas>
+<div>
+    <div id="outer">
+        <div id="cub-monitor">
+            <img id="#cub-monitor-pic" width="896" height="648" src="images/cub-monitor.png">
+            <div class="sidebar left"><img></div>
+            <canvas id="screen" width="896" height="600"></canvas>
+            <div class="sidebar right"><img></div>
+            <div class="sidebar bottom"><img></div>
         </div>
     </div>
     <div id="leds">
@@ -174,6 +179,30 @@
             </tbody>
         </table>
     </div>
+    <div id="crtc_debug" class="initially-hidden">
+        <div class="crtc_state">
+            <h6 class="dbg">6845 state</h6>
+            <table>
+                <tbody>
+                <tr class="template">
+                    <th><span class="register"></span>:</th>
+                    <td class="value"></td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="crtc_regs">
+            <h6 class="dbg">6845 regs</h6>
+            <table>
+                <tbody>
+                <tr class="template">
+                    <th><span class="register"></span>:</th>
+                    <td class="value"></td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
     <div id="debug" class="initially-hidden">
         <div class="debug-container">
             <form class="form-inline" role="form" id="goto-mem-addr-form">
@@ -185,8 +214,9 @@
             </form>
             <div id="memory">
                 <div class="template"><span class="dis_addr">0000</span><span
-                        class="mem_bytes">11 22 33 44 55 66 77 88</span><span
-                        class="mem_asc">ABCDEFG</span></div>
+                        class="mem_bytes"><span>11</span> <span>22</span> <span>33</span> <span>44</span> <span>55</span> <span>66</span> <span>77</span> <span>88</span></span><span
+                        class="mem_asc"><span>A</span><span>A</span><span>A</span><span>A</span><span>A</span><span>A</span><span>A</span><span>A</span></span>
+                </div>
             </div>
         </div>
         <div class="debug-container">
@@ -197,7 +227,7 @@
                 </div>
             </form>
             <div id="disassembly">
-                <div class="template"><span class="dis_addr">0000</span><span
+                <div class="template dis_elem"><span class="bp_gutter"></span><span class="dis_addr">0000</span><span
                         class="instr_bytes">11 22 33</span><span class="instr_asc">ABC</span><span
                         class="disassembly">LDA (&amp;70), X</span></div>
             </div>
@@ -217,7 +247,7 @@
     </div>
     <div id="hardware_debug" class="initially-hidden">
         <div class="via_regs" id="sysvia">
-            <h6>System VIA</h6>
+            <h6 class="dbg">System VIA</h6>
             <table>
                 <tbody>
                 <tr class="template">
@@ -228,7 +258,7 @@
             </table>
         </div>
         <div class="via_regs" id="uservia">
-            <h6>User VIA</h6>
+            <h6 class="dbg">User VIA</h6>
             <table>
                 <tbody>
                 <tr class="template">
@@ -318,7 +348,7 @@
                     </tr>
                     <tr>
                         <td>
-                            <div class="dbl key">*<br>:</span></div>
+                            <div class="dbl key">*<br>:</div>
                         </td>
                         <td>TODO</td>
                         <td>TODO</td>
@@ -352,11 +382,13 @@
                     <li class="template"><a href="#"><span class="name"></span></a> - <span
                             class="description"></span></li>
                 </ul>
-                To load a custom disc image, get an SSD file and load it below. Search the web, or check somewhere
+                To load a custom disc image, get an SSD or DSD file and load it below. Search the web, or check
+                somewhere
                 like <a href="http://www.bbcmicrogames.com/GettingStarted.html">here</a> for these. Be aware the
                 images are usually stored in a ZIP file, and you'll need to unzip first.
                 <div class="disc">
-                    <label>Load local SSD file: <input type="file" id="disc_load" accept=".ssd,image/*"></label>
+                    <label>Load local SSD or DSD file: <input type="file" id="disc_load"
+                                                              accept=".ssd,.dsd,application/binary"></label>
                 </div>
             </div>
             <div class="modal-footer">
@@ -379,7 +411,8 @@
             <div class="modal-body">
                 To load a custom cassette image, get a UEF file and load it below.
                 <div class="tape">
-                    <label>Load local UEF file: <input type="file" id="tape_load" accept=".uef,image/*"></label>
+                    <label>Load local UEF file: <input type="file" id="tape_load"
+                                                       accept=".uef,application/binary"></label>
                 </div>
             </div>
             <div class="modal-footer">
@@ -397,14 +430,15 @@
         <div class="modal-content">
             <div class="modal-header">
                 <button type="button" class="close" data-dismiss="modal" aria-hidden="true">&times;</button>
-                <h4 class="modal-title">Load or create disc from your <a href="https://drive.google.com/">Google Drive</a>
+                <h4 class="modal-title">Load or create disc from your <a href="https://drive.google.com/">Google
+                    Drive</a>
                     account</h4>
 
                 <div class="loading">Loading...</div>
             </div>
             <div class="modal-body">
                 <div>
-                    <ul class ="list">
+                    <ul class="list">
                         <li class="template"><a href="#"><span class="name"></span></a></li>
                     </ul>
                     <div>
@@ -430,6 +464,7 @@
         <div class="modal-content">
             <div class="modal-body">
                 <h4 class="modal-title loading"></h4>
+
                 <div style="display:none" id="google-drive-auth">
                     Google Drive requires you to authorize jsbeeb to access your files by logging in.<br>
                     Please click Authorize to open a Google Drive pop-up to authenticate and give permission to jsbeeb.
@@ -464,6 +499,8 @@
                 </ul>
             </div>
             <div class="modal-footer">
+                <label class="pull-left checkbox-inline"><input type="checkbox" class="autoboot"
+                                                                value="">Autoboot</label>
                 <button type="button" class="btn btn-default" data-dismiss="modal">Close</button>
             </div>
         </div>

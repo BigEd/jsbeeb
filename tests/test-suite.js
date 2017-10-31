@@ -10,18 +10,11 @@ requirejs.config({
     }
 });
 
-requirejs(['video', 'soundchip', '6502', 'fdc', 'utils', 'models', 'promise'],
-    function (Video, SoundChip, Cpu6502, fdc, utils, models) {
+requirejs(['fake6502', 'utils', 'promise'],
+    function (Fake6502, utils) {
         "use strict";
 
-        var paint = function () {
-        };
-        var video = new Video(new Uint32Array(1280 * 1024), paint);
-        var soundChip = new SoundChip(10000);
-        var dbgr = { setCpu: function () {
-        } };
-
-        var processor = new Cpu6502(models.TEST_6502, dbgr, video, soundChip);
+        var processor = Fake6502.fake6502();
         var irqRoutine = [
             0x48,
             0x8A,
@@ -40,12 +33,12 @@ requirejs(['video', 'soundchip', '6502', 'fdc', 'utils', 'models', 'promise'],
             var i;
             for (i = 0x0000; i < 0xffff; ++i)
                 processor.writemem(i, 0x00);
-            return utils.loadData("tests/suite/bin/" + filename).then(function(data){
+            return utils.loadData("tests/suite/bin/" + filename).then(function (data) {
                 var addr = data[0] + (data[1] << 8);
                 console.log(">> Loading test '" + filename + "' at " + utils.hexword(addr));
                 for (i = 2; i < data.length; ++i)
                     processor.writemem(addr + i - 2, data[i]);
-                for (var i = 0; i < irqRoutine.length; ++i)
+                for (i = 0; i < irqRoutine.length; ++i)
                     processor.writemem(0xff48 + i, irqRoutine[i]);
 
                 processor.writemem(0x0002, 0x00);
@@ -85,7 +78,6 @@ requirejs(['video', 'soundchip', '6502', 'fdc', 'utils', 'models', 'promise'],
             else if (char >= 0x41 && char <= 0x5a)
                 char = char - 0x41 + 97;
             else if (char < 32 || char >= 127) {
-                return char.toString() + ' ';
                 char = 46;
             }
             return String.fromCharCode(char);
@@ -103,7 +95,7 @@ requirejs(['video', 'soundchip', '6502', 'fdc', 'utils', 'models', 'promise'],
                     processor.writemem(0x030c, 0x00);
                     break;
                 case 0xe16f:
-                    var filenameAddr = processor.readmem(0xbb) | (processor.readmem(0xbc)<<8);
+                    var filenameAddr = processor.readmem(0xbb) | (processor.readmem(0xbc) << 8);
                     var filenameLen = processor.readmem(0xb7);
                     var filename = "";
                     for (var i = 0; i < filenameLen; ++i)
@@ -128,7 +120,7 @@ requirejs(['video', 'soundchip', '6502', 'fdc', 'utils', 'models', 'promise'],
         });
 
         function anIter() {
-            for (;;) {
+            for (; ;) {
                 if (!processor.execute(10 * 1000 * 1000)) return;
             }
         }

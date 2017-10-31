@@ -1,17 +1,26 @@
-define([], function () {
+define(['./utils'], function (utils) {
     "use strict";
-    return function SoundChip(sampleRate) {
-        var soundchipFreq = 4000000.0 / 16;
-        var sampleDecrement = soundchipFreq / sampleRate;
-        var samplesPerCycle = sampleRate / (2 * 1000 * 1000); // TODO hacky here
+    function SoundChip(sampleRate) {
+        var cpuFreq = 1 / (2 * 1000 * 1000); // TODO hacky here
+        // 4MHz input signal. Internal divide-by-8
+        var soundchipFreq = 4000000.0 / 8;
+        // Square wave changes every time a counter hits zero. Thus a full wave
+        // needs to be 2x counter zeros.
+        var waveDecrementPerSecond = soundchipFreq / 2;
+        // Each sample in the buffer represents (1/sampleRate) time, so each time
+        // we generate a sample, we need to decrement the counters by this amount:
+        var sampleDecrement = waveDecrementPerSecond / sampleRate;
+        // How many samples are generated per CPU cycle.
+        var samplesPerCycle = sampleRate * cpuFreq;
+        var minCyclesWELow = 14; // Somewhat empirically derived; Repton 2 has only 14 cycles between WE low and WE high (@0x2caa)
 
-        var register = [ 0, 0, 0, 0 ];
+        var register = [0, 0, 0, 0];
         this.registers = register; // for debug
-        var counter = [ 0, 0, 0, 0 ];
-        var outputBit = [ false, false, false, false ];
-        var volume = [ 0, 0, 0, 0 ];
+        var counter = [0, 0, 0, 0];
+        var outputBit = [false, false, false, false];
+        var volume = [0, 0, 0, 0];
         this.volume = volume;  // for debug
-        var generators = [ null, null, null, null, null ];
+        var generators = [null, null, null, null, null];
 
         var volumeTable = [];
         var f = 1.0;
@@ -77,20 +86,20 @@ define([], function () {
         var lfsr = 0;
 
         function shiftLfsrWhiteNoise() {
-            var bit = (lfsr & 1) ^ ((lfsr & (1 << 3)) >> 3);
-            lfsr = (lfsr >> 1) | (bit << 15);
+            var bit = (lfsr & 1) ^ ((lfsr & (1 << 1)) >> 1);
+            lfsr = (lfsr >> 1) | (bit << 14);
         }
 
         function shiftLfsrPeriodicNoise() {
             lfsr >>= 1;
-            if (lfsr === 0) lfsr = 1 << 15;
+            if (lfsr === 0) lfsr = 1 << 14;
         }
 
         var shiftLfsr = shiftLfsrWhiteNoise;
 
         function noisePoked() {
             shiftLfsr = register[3] & 4 ? shiftLfsrWhiteNoise : shiftLfsrPeriodicNoise;
-            lfsr = 1 << 15;
+            lfsr = 1 << 14;
         }
 
         function addFor(channel) {
@@ -144,8 +153,20 @@ define([], function () {
             cyclesPending = 0;
         }
 
+        var activeCountdown = 0;
         this.polltime = function (cycles) {
             cyclesPending += cycles;
+            if (activeCountdown) {
+                activeCountdown -= cycles;
+                if (activeCountdown <= 0) {
+                    if (this.active) {
+                        advance(-activeCountdown);
+                        cyclesPending += activeCountdown;
+                        poke(this.slowDataBus);
+                    }
+                    activeCountdown = 0;
+                }
+            }
         };
 
         var residual = 0;
@@ -193,13 +214,13 @@ define([], function () {
             var latchData = !!(value & 0x80);
             if (latchData)
                 latchedChannel = (value >> 5) & 3;
-            if ((value & 0x90) == 0x90) {
+            if ((value & 0x90) === 0x90) {
                 // Volume setting
                 var newVolume = value & 0x0f;
                 volume[latchedChannel] = volumeTable[newVolume];
             } else {
                 // Data of some sort.
-                if (latchedChannel == 3) {
+                if (latchedChannel === 3) {
                     // For noise channel we always update the bottom bits of the register.
                     register[latchedChannel] = value & 0x0f;
                     noisePoked();
@@ -220,8 +241,17 @@ define([], function () {
         generators[4] = sineChannel;
 
         this.render = render;
-        this.poke = poke;
-        this.reset = function () {
+        this.active = false;
+        this.slowDataBus = 0;
+        this.updateSlowDataBus = function(slowDataBus, active) {
+            this.slowDataBus = slowDataBus;
+            if (active && !this.active) {
+                activeCountdown = minCyclesWELow;
+            }
+            this.active = active;
+        };
+        this.reset = function (hard) {
+            if (!hard) return;
             for (var i = 0; i < 4; ++i) {
                 counter[i] = 0;
                 register[i] = 0;
@@ -240,5 +270,15 @@ define([], function () {
         this.unmute = function () {
             enabled = true;
         };
+    }
+
+    function FakeSoundChip() {
+        this.reset = this.enable = this.mute = this.unmute = this.render = this.updateSlowDataBus = this.polltime = utils.noop;
+        this.toneGenerator = this;
+    }
+
+    return {
+        SoundChip: SoundChip,
+        FakeSoundChip: FakeSoundChip
     };
 });

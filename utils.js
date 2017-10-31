@@ -645,6 +645,21 @@ define(['jsunzip', 'promise'], function (jsunzip) {
 
     exports.signExtend = signExtend;
 
+    exports.noop = function noop() {
+    };
+
+    exports.bench = function () {
+        for (var j = 0; j < 10; ++j) {
+            var res = 0;
+            var start = Date.now();
+            for (var i = 0; i < 4096 * 1024; ++i) {
+                res += signExtend(i & 0xff);
+            }
+            var tt = Date.now() - start;
+            console.log(res, tt);
+        }
+    };
+
     exports.noteEvent = function noteEvent(category, type, label) {
         if (!exports.runningInNode && window.location.origin == "http://bbc.godbolt.org") {
             // Only note events on the public site
@@ -663,10 +678,13 @@ define(['jsunzip', 'promise'], function (jsunzip) {
 
     exports.makeBinaryData = makeBinaryData;
 
+    var baseUrl = "";
+    exports.setBaseUrl = function(url) { baseUrl = url; }
+
     function loadDataHttp(url) {
         return new Promise(function (resolve, reject) {
             var request = new XMLHttpRequest();
-            request.open("GET", url, true);
+            request.open("GET", baseUrl + url, true);
             request.overrideMimeType('text/plain; charset=x-user-defined');
             request.onload = function () {
                 if (request.status !== 200) reject(new Error("Unable to load " + url + ", http code " + request.status));
@@ -872,6 +890,43 @@ define(['jsunzip', 'promise'], function (jsunzip) {
         // Having a function do this makes it easy to test u32 vs i32, and means we
         // keep the rest of the code using u32 (which makes more sense to me).
         return new Int32Array(u32.buffer);
+    };
+
+    exports.unzipDiscImage = function unzipDiscImage(data) {
+        var unzip = new jsunzip.JSUnzip();
+        console.log("Attempting to unzip");
+        var result = unzip.open(data);
+        if (!result.status) {
+            throw new Error("Error unzipping ", result.error);
+        }
+        var uncompressed = null;
+        var knownExtensions = {
+            'uef': true,
+            'ssd': true,
+            'dsd': true
+        };
+        var loadedFile;
+        for (var f in unzip.files) {
+            var match = f.match(/.*\.([a-z]+)/i);
+            if (!match || !knownExtensions[match[1].toLowerCase()]) {
+                console.log("Skipping file", f);
+                continue;
+            }
+            if (uncompressed) {
+                console.log("Ignoring", f, "as already found a file");
+                continue;
+            }
+            loadedFile = f;
+            uncompressed = unzip.read(f);
+        }
+        if (!uncompressed) {
+            throw new Error("Couldn't find any compatible files in the archive");
+        }
+        if (!uncompressed.status) {
+            throw new Error("Failed to uncompress file '" + loadedFile + "' - " + uncompressed.error);
+        }
+        console.log("Unzipped '" + loadedFile + "'");
+        return {data: uncompressed.data, name: loadedFile};
     };
 
     return exports;

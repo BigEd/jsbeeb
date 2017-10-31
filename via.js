@@ -1,4 +1,4 @@
-define(['utils'], function (utils) {
+define(['./utils'], function (utils) {
     const ORB = 0x0,
         ORA = 0x1,
         DDRB = 0x2,
@@ -36,7 +36,7 @@ define(['utils'], function (utils) {
             ca1: 0, ca2: 0,
             justhit: 0,
 
-            reset: function () {
+            reset: function (hard) {
                 self.ora = self.orb = 0xff;
                 self.ddra = self.ddrb = 0xff;
                 self.ifr = self.ier = 0x00;
@@ -489,20 +489,18 @@ define(['utils'], function (utils) {
         };
 
         self.writeIC32 = function (val) { // addressable latch
-            var oldIC32 = self.IC32;
             if (val & 8)
                 self.IC32 |= (1 << (val & 7));
             else
                 self.IC32 &= ~(1 << (val & 7));
 
             self.updateSdb();
-            if (!(self.IC32 & 1) && (oldIC32 & 1))
-                soundChip.poke(self.sdbval);
+            soundChip.updateSlowDataBus(self.sdbval, !(self.IC32 & 1));
 
             self.capsLockLight = !(self.IC32 & 0x40);
             self.shiftLockLight = !(self.IC32 & 0x80);
 
-            video.setScreenSize(((self.IC32 & 16) ? 2 : 0) | ((self.IC32 & 32) ? 1 : 0));
+            video.setScreenAdd(((self.IC32 & 16) ? 2 : 0) | ((self.IC32 & 32) ? 1 : 0));
             if (isMaster) cmos.write(self.IC32, self.sdbval);
         };
 

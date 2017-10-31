@@ -1,6 +1,6 @@
 // frogman runner, was useful in debugging the protection system.
 var requirejs = require('requirejs');
-var Png = require('png').Png;
+var Png = require('node-png').PNG;
 var fs = require('fs');
 
 requirejs.config({
@@ -11,41 +11,32 @@ requirejs.config({
     }
 });
 
-requirejs(['video', '6502', 'soundchip', 'fdc', 'models', 'tests/test.js', 'utils'],
-    function (Video, Cpu6502, SoundChip, disc, models, test, utils) {
+requirejs(['video', 'fake6502', 'soundchip', 'fdc', 'models', 'tests/test.js', 'utils'],
+    function (Video, Fake6502, SoundChip, disc, models, test, utils) {
         var fb32 = new Uint32Array(1280 * 768);
         var frame = 0;
         var screenshotRequest = null;
-        var video = new Video(fb32, function (minx, miny, maxx, maxy) {
+        var video = new Video.Video(fb32, function (minx, miny, maxx, maxy) {
             frame++;
             if (screenshotRequest) {
                 var width = maxx - minx;
                 var height = maxy - miny;
-                var buf = new Buffer(width * height * 3);
                 var addr = 0;
+                var png = new Png({width: width, height: height});
                 for (var y = miny; y < maxy; ++y) {
                     for (var x = minx; x < maxx; ++x) {
                         var col = fb32[1280 * y + x];
-                        buf[addr++] = col & 0xff;
-                        buf[addr++] = (col >>> 8) & 0xff;
-                        buf[addr++] = (col >>> 16) & 0xff;
+                        png.data[addr++] = col & 0xff;
+                        png.data[addr++] = (col >>> 8) & 0xff;
+                        png.data[addr++] = (col >>> 16) & 0xff;
+                        png.data[addr++] = 0xff;
                     }
                 }
-                var png = new Png(buf, width, height);
-                var pngImage = png.encodeSync();
-                console.log("Saving " + width + "x" + height + " screenshot to " + screenshotRequest);
-                fs.writeFileSync(screenshotRequest, pngImage.toString('binary'), 'binary');
+                console.log("Scheduling save of " + width + "x" + height + " screenshot to " + screenshotRequest);
+                png.pack().pipe(fs.createWriteStream(screenshotRequest));
                 screenshotRequest = null;
             }
         });
-        var dbgr = {
-            setCpu: function () {
-            },
-            debug: function(addr) {
-                console.log("yikes " + addr);
-            }
-        };
-        var soundChip = new SoundChip(44000);
 
         function benchmarkCpu(cpu, numCycles) {
             numCycles = numCycles || 10 * 1000 * 1000;
@@ -59,14 +50,12 @@ requirejs(['video', '6502', 'soundchip', 'fdc', 'models', 'tests/test.js', 'util
         }
 
         var discName = "frogman";
-        var cpu = new Cpu6502(models.findModel('B'), dbgr, video, soundChip, {}, {
-            keyLayout: 'physical'
-        });
+        var cpu = Fake6502.fake6502(models.findModel('B'), {video: video});
         test.setProcessor(cpu);
         cpu.initialise().then(function () {
-            return disc.ssdLoad("discs/" + discName + ".ssd");
+            return disc.load("discs/" + discName + ".ssd");
         }).then(function (data) {
-            cpu.fdc.loadDisc(0, disc.ssdFor(cpu.fdc, data));
+            cpu.fdc.loadDisc(0, disc.discFor(cpu.fdc, false, data));
             var trace = false;
             cpu.debugInstruction.add(function (addr) {
                 //if (addr === 0x11ae) {
@@ -103,20 +92,17 @@ requirejs(['video', '6502', 'soundchip', 'fdc', 'models', 'tests/test.js', 'util
             var first = 1564809;
             console.log(first);
             exec(first);
-            console.log("now = " + cpu.currentCycles
-            + " " + utils.hexword(cpu.pc));
+            console.log("now = " + cpu.currentCycles + " " + utils.hexword(cpu.pc));
             cpu.sysvia.enableKeyboard();
             var second = 2097489 - cpu.currentCycles;
             console.log(second);
             exec(second);
-            console.log("now = " + cpu.currentCycles
-            + " " + utils.hexword(cpu.pc));
+            console.log("now = " + cpu.currentCycles + " " + utils.hexword(cpu.pc));
             cpu.sysvia.keyDown(49);
             var third = 2363365 - cpu.currentCycles;
             console.log(third);
             exec(third);
-            console.log("now = " + cpu.currentCycles
-            + " " + utils.hexword(cpu.pc));
+            console.log("now = " + cpu.currentCycles + " " + utils.hexword(cpu.pc));
             cpu.sysvia.keyUp(49);
             console.log("Typed 1");
             for (var i = 0; i < 2; ++i) {

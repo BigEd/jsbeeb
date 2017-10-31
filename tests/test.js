@@ -1,9 +1,7 @@
-define(['video', 'soundchip', '6502', 'fdc', 'utils', 'models', 'cmos'],
-    function (Video, SoundChip, Cpu6502, fdc, utils, models, Cmos) {
+define(['video', 'fake6502', 'fdc', 'utils', 'models'],
+    function (Video, Fake6502, fdc, utils, models) {
         var processor;
         var video;
-        var soundChip;
-        var dbgr;
         var MaxCyclesPerIter = 100 * 1000;
         var hexword = utils.hexword;
         var failures = 0;
@@ -11,24 +9,33 @@ define(['video', 'soundchip', '6502', 'fdc', 'utils', 'models', 'cmos'],
         var log, beginTest, endTest;
 
         var tests = [
-            { test: "Test BCD (65C12)", func: testBCD, model: 'Master'},
-            { test: "Test BCD (6502)", func: testBCD},
-            { test: "Test timings", func: testTimings},
-            { test: "Alien8 protection", func: function () { return testKevinEdwards("ALIEN8"); }},
-            { test: "Nightshade protection", func: function () { return testKevinEdwards("NIGHTSH"); }},
-            { test: "Lunar Jetman protection", func: function () { return testKevinEdwards("JETMAN"); }}
+            {test: "Test RMX.x (65C12)", func: testRmw, model: 'Master'},
+            {test: "Test RMW,x (6502)", func: testRmw},
+            {test: "Test BCD (65C12)", func: testBCD, model: 'Master'},
+            {test: "Test BCD (6502)", func: testBCD},
+            {test: "Test timings", func: testTimings},
+            {
+                test: "Alien8 protection", func: function () {
+                return testKevinEdwards("ALIEN8");
+            }
+            },
+            {
+                test: "Nightshade protection", func: function () {
+                return testKevinEdwards("NIGHTSH");
+            }
+            },
+            {
+                test: "Lunar Jetman protection", func: function () {
+                return testKevinEdwards("JETMAN");
+            }
+            }
         ];
 
         function run(log_, beginTest_, endTest_, frameBuffer, paint) {
             log = log_;
             beginTest = beginTest_;
             endTest = endTest_;
-            video = new Video(frameBuffer, paint);
-            soundChip = new SoundChip(10000);
-            dbgr = {
-                setCpu: function () {
-                }
-            };
+            video = new Video.Video(frameBuffer, paint);
 
             return tests.reduce(function (p, test) {
                 return p.then(function () {
@@ -141,13 +148,13 @@ define(['video', 'soundchip', '6502', 'fdc', 'utils', 'models', 'cmos'],
 
         var currentTest = null;
 
-        function log() {
+        log = function () {
             console.log.apply(console, arguments);
             var msg = Array.prototype.join.call(arguments, " ");
             if (currentTest) {
                 currentTest.find(".template").clone().removeClass("template").text(msg).appendTo(currentTest);
             }
-        }
+        };
 
         function expectEq(expected, actual, msg) {
             if (actual !== expected) {
@@ -185,8 +192,8 @@ define(['video', 'soundchip', '6502', 'fdc', 'utils', 'models', 'cmos'],
                 0x45A6, 0xC0, 0x00,
                 0x0000, 0x00, 0x00,
             ];
-            return fdc.ssdLoad("/discs/TestTimings.ssd").then(function (data) {
-                processor.fdc.loadDisc(0, fdc.ssdFor(processor.fdc, data));
+            return fdc.load("discs/TestTimings.ssd").then(function (data) {
+                processor.fdc.loadDisc(0, fdc.discFor(processor.fdc, false, data));
                 return runUntilInput();
             }).then(function () {
                 return type('CHAIN "TEST"');
@@ -204,11 +211,35 @@ define(['video', 'soundchip', '6502', 'fdc', 'utils', 'models', 'cmos'],
             });
         }
 
+        function testRmw() {
+            return fdc.load("discs/RmwX.ssd").then(function (data) {
+                processor.fdc.loadDisc(0, fdc.discFor(processor.fdc, false, data));
+                return runUntilInput();
+            }).then(function () {
+                return type("*TIMINGS");
+            }).then(runUntilInput).then(function () {
+                var result = "";
+                for (var i = 0x100; i < 0x110; i += 4) {
+                    if (i != 0x100) result += " "
+                    for (var j = 3; j >= 0; --j) {
+                        result += utils.hexbyte(processor.readmem(i + j));
+                    }
+                }
+                var expected = processor.model.isMaster ?
+                    "f4ff0a16 eaeadee9 f2fe0a16 c3ced9e5" :
+                    "f2fe0a16 eaeadae6 f2fe0a16 c1cdd9e5";
+                if (result != expected) {
+                    log("failed! got:\n" + result + " expected:\n" + expected);
+                    failures++;
+                }
+            });
+        }
+
         function testBCD() {
             var output = "";
             var hook;
-            return fdc.ssdLoad("/discs/bcdtest.ssd").then(function (data) {
-                processor.fdc.loadDisc(0, fdc.ssdFor(processor.fdc, data));
+            return fdc.load("discs/bcdtest.ssd").then(function (data) {
+                processor.fdc.loadDisc(0, fdc.discFor(processor.fdc, false, data));
                 return runUntilInput();
             }).then(function () {
                 return type("*BCDTEST");
@@ -230,8 +261,8 @@ define(['video', 'soundchip', '6502', 'fdc', 'utils', 'models', 'cmos'],
         }
 
         function testKevinEdwards(name) { // Well, at least his protection system...
-            return fdc.ssdLoad("/discs/Protection.ssd").then(function (data) {
-                processor.fdc.loadDisc(0, fdc.ssdFor(processor.fdc, data));
+            return fdc.load("discs/Protection.ssd").then(function (data) {
+                processor.fdc.loadDisc(0, fdc.discFor(processor.fdc, false, data));
                 return runUntilInput();
             }).then(function () {
                 return type('CHAIN "B.' + name + '"');
@@ -254,7 +285,7 @@ define(['video', 'soundchip', '6502', 'fdc', 'utils', 'models', 'cmos'],
             model = model || 'B';
             log("Running", name);
             beginTest(name);
-            processor = new Cpu6502(models.findModel(model), dbgr, video, soundChip, new Cmos());
+            processor = Fake6502.fake6502(models.findModel(model), {video: video});
             failures = 0;
             return processor.initialise().then(func).then(function () {
                 log("Finished", name);

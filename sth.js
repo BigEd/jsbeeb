@@ -1,9 +1,10 @@
-// Accesses STH archive via a proxy on the bbc.godbolt.org website
+// Accesses STH archive.
 define(['utils', 'jquery', 'jsunzip'], function (utils, $, jsunzip) {
     "use strict";
     return function StairwayToHell(onStart, onCat, onError, tape) {
         var self = this;
-        var baseUrl = tape ? "http://bbc.godbolt.org/sth/tapeimages/" : "http://bbc.godbolt.org/sth/diskimages/";
+        var baseUrl = document.location.protocol + "//www.stairwaytohell.com/bbc/archive/";
+        if (tape) baseUrl += "tapeimages/"; else baseUrl += "diskimages/";
 
         var catalogUrl = "reclist.php?sort=name&filter=.zip";
         var catalog = [];
@@ -38,39 +39,7 @@ define(['utils', 'jquery', 'jsunzip'], function (utils, $, jsunzip) {
             var name = baseUrl + file;
             console.log("Loading ZIP from " + name);
             return utils.loadData(name).then(function (data) {
-                var unzip = new jsunzip.JSUnzip();
-                console.log("Attempting to unzip");
-                var result = unzip.open(data);
-                if (!result.status) {
-                    throw new Error("Error unzipping ", result.error);
-                }
-                var uncompressed = null;
-                var knownExtensions = {
-                    'uef': true,
-                    'ssd': true,
-                    'dsd': true
-                };
-                var loadedFile;
-                for (var f in unzip.files) {
-                    var match = f.match(/.*\.([a-z]+)/i);
-                    if (!match || !knownExtensions[match[1].toLowerCase()]) {
-                        console.log("Skipping file", f);
-                        continue;
-                    }
-                    if (uncompressed) {
-                        console.log("Ignoring", f, "as already found a file");
-                        continue;
-                    }
-                    loadedFile = f;
-                    uncompressed = unzip.read(f);
-                }
-                if (!uncompressed) {
-                    throw new Error("Couldn't find any compatible files in the archive");
-                }
-                if (!uncompressed.status) {
-                    throw new Error("Failed to uncompress file '" + loadedFile + "' - " + uncompressed.error);
-                }
-                return uncompressed.data;
+                return utils.unzipDiscImage(data).data;
             });
         };
     };

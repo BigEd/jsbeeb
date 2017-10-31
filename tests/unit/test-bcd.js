@@ -1,19 +1,6 @@
 var requirejs = require('requirejs');
-var Cpu6502 = requirejs('6502');
-var SoundChip = requirejs('soundchip');
-var Cmos = requirejs('cmos');
-var Video = requirejs('video');
-var dbgr = {
-    setCpu: function () {
-    }
-};
-var models = requirejs('models');
-var paint = function () {
-};
-var fb32 = new Uint32Array(1280 * 1024);
-var video = new Video(fb32, paint);
-var soundChip = new SoundChip(10000);
-var cpu = new Cpu6502(models.TEST_65C12, dbgr, video, soundChip, new Cmos());
+var Fake6502 = requirejs('fake6502');
+var cpu = Fake6502.fake65C12();
 
 exports.bcd65c12sbc1 = function (test) {
     cpu.initialise().then(function () {
